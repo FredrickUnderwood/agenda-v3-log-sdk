@@ -77,6 +77,9 @@ func isTruthy(v string) bool {
 var (
 	mu     sync.RWMutex
 	logger *zap.Logger
+	// helperLogger skips the single Debug/Info/Warn/Error wrapper frame.
+	// Keep logger unmodified so L().Info and derived Zap loggers retain their caller.
+	helperLogger *zap.Logger
 
 	// ContextFields, when set, extracts additional fields from the request
 	// context (e.g. a trace or request id) for the context-aware helpers. It is
@@ -104,6 +107,9 @@ func Init(cfg Config) error {
 	}
 
 	zcfg := zap.NewProductionConfig()
+	// Preserve the entire compiler-recorded path, not only the last directory.
+	// With go build -trimpath this is the module path plus source file and line.
+	zcfg.EncoderConfig.EncodeCaller = zapcore.FullCallerEncoder
 	if cfg.Level != "" {
 		var level zap.AtomicLevel
 		if err := level.UnmarshalText([]byte(cfg.Level)); err == nil {
@@ -163,6 +169,7 @@ func Init(cfg Config) error {
 	}
 	mu.Lock()
 	logger = l
+	helperLogger = l.WithOptions(zap.AddCallerSkip(1))
 	mu.Unlock()
 	return nil
 }
@@ -177,24 +184,33 @@ func L() *zap.Logger {
 	return logger
 }
 
+func helper() *zap.Logger {
+	mu.RLock()
+	defer mu.RUnlock()
+	if helperLogger == nil {
+		return zap.NewNop()
+	}
+	return helperLogger
+}
+
 // Debug logs at debug level, enriched with any context fields.
 func Debug(ctx context.Context, msg string, fields ...zap.Field) {
-	L().Debug(msg, withContext(ctx, fields)...)
+	helper().Debug(msg, withContext(ctx, fields)...)
 }
 
 // Info logs at info level, enriched with any context fields.
 func Info(ctx context.Context, msg string, fields ...zap.Field) {
-	L().Info(msg, withContext(ctx, fields)...)
+	helper().Info(msg, withContext(ctx, fields)...)
 }
 
 // Warn logs at warn level, enriched with any context fields.
 func Warn(ctx context.Context, msg string, fields ...zap.Field) {
-	L().Warn(msg, withContext(ctx, fields)...)
+	helper().Warn(msg, withContext(ctx, fields)...)
 }
 
 // Error logs at error level, enriched with any context fields.
 func Error(ctx context.Context, msg string, fields ...zap.Field) {
-	L().Error(msg, withContext(ctx, fields)...)
+	helper().Error(msg, withContext(ctx, fields)...)
 }
 
 // Shutdown flushes any buffered log entries. Call on process exit.

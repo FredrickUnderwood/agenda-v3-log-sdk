@@ -3,13 +3,69 @@ package log
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"go.uber.org/zap"
 )
+
+func TestCaller_SourcePathAndLine(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(Config{AppName: "caller", LogDir: dir, Level: "debug"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := ContextWithTraceID(context.Background(), "caller-test-trace")
+	want := map[string]string{}
+	_, file, line, _ := runtime.Caller(0)
+	Debug(ctx, "debug")
+	want["debug"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	Info(ctx, "info")
+	want["info"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	Warn(ctx, "warn")
+	want["warn"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	Error(ctx, "error")
+	want["error"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	L().Info("direct")
+	want["direct"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	L().With(zap.String("component", "test")).Info("derived")
+	want["derived"] = fmt.Sprintf("%s:%d", file, line+1)
+	_, file, line, _ = runtime.Caller(0)
+	L().Sugar().Info("sugar")
+	want["sugar"] = fmt.Sprintf("%s:%d", file, line+1)
+	Shutdown()
+	entries := readLines(t, filepath.Join(dir, "caller.log"))
+	if len(entries) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(entries), len(want))
+	}
+	for _, entry := range entries {
+		msg := entry["msg"].(string)
+		expected, ok := want[msg]
+		if !ok || entry["caller"] != expected {
+			t.Errorf("%s caller = %v, want %s", msg, entry["caller"], expected)
+		}
+		if msg == "debug" || msg == "info" || msg == "warn" || msg == "error" {
+			if entry["trace_id"] != "caller-test-trace" {
+				t.Errorf("%s lost its context fields", msg)
+			}
+		}
+		if msg == "error" && !strings.Contains(entry["stacktrace"].(string), expected) {
+			t.Errorf("error stacktrace does not contain the original caller: %v", entry["stacktrace"])
+		}
+		delete(want, msg)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing calls: %v", want)
+	}
+}
 
 func readLines(t *testing.T, path string) []map[string]any {
 	t.Helper()

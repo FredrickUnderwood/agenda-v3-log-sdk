@@ -9,7 +9,7 @@ Agenda platform. It contains no deployment configuration or backend credentials.
 Requires Go 1.25 or newer (including the optional Gin adapter).
 
 ```sh
-go get github.com/FredrickUnderwood/agenda-v3-log-sdk@v0.1.0
+go get github.com/FredrickUnderwood/agenda-v3-log-sdk@v0.1.1
 ```
 
 ```go
@@ -30,6 +30,31 @@ func main() {
     log.Info(context.Background(), "service started", zap.Int("port", 8080))
 }
 ```
+
+## Source file and line
+
+Since v0.1.1, `Debug`, `Info`, `Warn` and `Error` record the business call site
+in `caller`, skipping the SDK wrapper. `L().Info`, derived loggers created with
+`L().With(...)`, and `L().Sugar()` also retain their own correct call sites.
+The full compiler-recorded path is preserved so files with the same basename
+in different packages stay distinguishable.
+
+Build deployment binaries with `go build -trimpath ./cmd/your-service` to get a
+module-qualified location such as
+`github.com/example/pay-service/internal/payment/pay.go:42`, without a build
+machine's absolute directory. Without `-trimpath`, Go records the build-time
+filesystem path. The line belongs to the source version used to build the
+running binary; check that deployment's commit rather than today's branch tip.
+This is the logging statement's location, not necessarily the origin of an error.
+
+If your project adds another logging wrapper, that wrapper becomes the call
+site. Call the SDK helpers directly, or create a Zap wrapper with
+`L().WithOptions(zap.AddCallerSkip(1))` for one additional wrapper frame.
+Browser entries re-emitted by `/clientlog` point to the Go ingestion code;
+mapping JavaScript bundles to their original sources requires client stacks
+and source maps and is not provided by this Go SDK.
+
+## Configuration
 
 The default destination is stderr, suitable for Docker and host log collectors.
 The application does not connect to Elasticsearch or Filebeat. Configuration
